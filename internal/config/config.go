@@ -102,23 +102,40 @@ func (c *Config) ResolveCompanyID(flagValue string) string {
 	return c.DefaultCompany
 }
 
-func (c *Config) ResolveClientID() string {
+// ResolveClientID resolves the OAuth client ID in priority order:
+// QBO_CLIENT_ID env var, then the keyring value, then the config file. The
+// keyring tier keeps app secrets out of plaintext while env stays an override
+// for CI/sandbox/multi-app use.
+//
+// fromKeyring is a provider invoked only when the env var is unset, so an
+// env-configured caller never opens the keyring (avoiding a needless read or
+// keychain prompt).
+func (c *Config) ResolveClientID(fromKeyring func() string) string {
 	if v := os.Getenv("QBO_CLIENT_ID"); v != "" {
 		return v
+	}
+	if k := fromKeyring(); k != "" {
+		return k
 	}
 	return c.ClientID
 }
 
-func (c *Config) ResolveClientSecret() string {
+func (c *Config) ResolveClientSecret(fromKeyring func() string) string {
 	if v := os.Getenv("QBO_CLIENT_SECRET"); v != "" {
 		return v
+	}
+	if k := fromKeyring(); k != "" {
+		return k
 	}
 	return c.ClientSecret
 }
 
-func (c *Config) ResolveRedirectURI() string {
+func (c *Config) ResolveRedirectURI(fromKeyring func() string) string {
 	if v := os.Getenv("QBO_REDIRECT_URI"); v != "" {
 		return v
+	}
+	if k := fromKeyring(); k != "" {
+		return k
 	}
 	return c.RedirectURI
 }

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"os"
+	"sync"
 
 	"github.com/voska/qbo-cli/internal/api"
 	"github.com/voska/qbo-cli/internal/auth"
@@ -47,6 +48,42 @@ type Globals struct {
 	OutOpts output.Options
 	CLI     *CLI
 	Version string
+
+	ccOnce sync.Once
+	cc     auth.ClientCreds
+}
+
+// keyringCreds lazily loads the app-level OAuth client credentials from the
+// keyring, once per process. It is only consulted when the corresponding env
+// var is unset (see the resolvers), so env-configured callers never open the
+// keyring. A read failure degrades to empty creds — warned once — so the
+// env/config resolution tiers still apply.
+func (g *Globals) keyringCreds() auth.ClientCreds {
+	g.ccOnce.Do(func() {
+		c, ok, err := auth.LoadClientCreds()
+		switch {
+		case err != nil:
+			output.Warn("could not read client credentials from keyring: %v", err)
+		case ok:
+			g.cc = c
+		}
+	})
+	return g.cc
+}
+
+// ClientID/ClientSecret/RedirectURI resolve credentials across all tiers:
+// env var → keyring → config file. The keyring closures are lazy: they only
+// run when the env var is unset, so an env-only setup never touches the keyring.
+func (g *Globals) ClientID() string {
+	return g.Config.ResolveClientID(func() string { return g.keyringCreds().ClientID })
+}
+
+func (g *Globals) ClientSecret() string {
+	return g.Config.ResolveClientSecret(func() string { return g.keyringCreds().ClientSecret })
+}
+
+func (g *Globals) RedirectURI() string {
+	return g.Config.ResolveRedirectURI(func() string { return g.keyringCreds().RedirectURI })
 }
 
 func NewGlobals(ctx context.Context, cli *CLI) (*Globals, error) {
@@ -89,10 +126,10 @@ func (g *Globals) loadAndRefreshToken(realmID string) (*oauth2.Token, error) {
 		return nil, err
 	}
 	if auth.IsTokenExpired(token) {
-		clientID := g.Config.ResolveClientID()
-		clientSecret := g.Config.ResolveClientSecret()
+		clientID := g.ClientID()
+		clientSecret := g.ClientSecret()
 		if clientID == "" || clientSecret == "" {
-			return nil, errfmt.Config("QBO_CLIENT_ID and QBO_CLIENT_SECRET required for token refresh")
+			return nil, errfmt.Config("client credentials required for token refresh — run: qbo auth set-client (or set QBO_CLIENT_ID and QBO_CLIENT_SECRET)")
 		}
 		newToken, err := auth.RefreshAccessToken(g.Ctx, clientID, clientSecret, token)
 		if err != nil {
