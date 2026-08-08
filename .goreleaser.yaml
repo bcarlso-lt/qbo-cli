@@ -33,12 +33,14 @@ changelog:
       - "^chore:"
       - "^ci:"
 
-brews:
+homebrew_casks:
   - name: qbo
-    directory: Formula
+    directory: Casks
     homepage: "https://github.com/voska/qbo-cli"
     description: "QuickBooks Online CLI for humans and AI agents"
     license: "MIT"
+    url:
+      verified: github.com/voska/qbo-cli
     repository:
       owner: voska
       name: homebrew-tap
@@ -46,10 +48,12 @@ brews:
     commit_author:
       name: voska-bot
       email: bot@voska.dev
-    install: |
-      bin.install "qbo"
-    test: |
-      system "#{bin}/qbo", "exit-codes", "--json"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/qbo"]
+          end
 
 scoops:
   - name: qbo
