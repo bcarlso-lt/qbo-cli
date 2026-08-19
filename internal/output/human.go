@@ -66,26 +66,30 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(s))
 }
 
+// The stderr helpers sanitize the formatted message: interpolated values can
+// carry untrusted API data (file names, error response bodies) whose control
+// characters could rewrite or spoof terminal output.
+
 func Hint(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
+	msg := SanitizeMessage(fmt.Sprintf(format, args...))
 	styled := termenv.String(msg).Foreground(profile.Color("8"))
 	fmt.Fprintln(os.Stderr, styled)
 }
 
 func Success(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
+	msg := SanitizeMessage(fmt.Sprintf(format, args...))
 	styled := termenv.String("✓ " + msg).Foreground(profile.Color("2"))
 	fmt.Fprintln(os.Stderr, styled)
 }
 
 func Warn(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
+	msg := SanitizeMessage(fmt.Sprintf(format, args...))
 	styled := termenv.String("⚠ " + msg).Foreground(profile.Color("3"))
 	fmt.Fprintln(os.Stderr, styled)
 }
 
 func ErrorMsg(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
+	msg := SanitizeMessage(fmt.Sprintf(format, args...))
 	styled := termenv.String("✗ " + msg).Foreground(profile.Color("1"))
 	fmt.Fprintln(os.Stderr, styled)
 }
