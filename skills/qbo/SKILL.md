@@ -155,7 +155,8 @@ echo '{"CustomerRef":{"value":"CUSTOMER_ID"},"TotalAmt":1500,"Line":[{"Amount":1
 ```bash
 qbo attach invoice 123 receipt.pdf --json
 qbo list attachable --where "AttachableRef.EntityRef.value = '123'" --json --results-only
-qbo download <id>
+qbo download <id>              # saves under the attachment's own name; add -o to choose the path
+qbo download <id> --force      # required to overwrite a file that already exists
 ```
 
 ## Recurring Transactions

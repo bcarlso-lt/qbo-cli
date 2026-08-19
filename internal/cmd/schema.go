@@ -120,9 +120,9 @@ func fullSchema(version string) map[string]any {
 			},
 			{
 				"name":  "download",
-				"help":  "Download an attachment file",
+				"help":  "Download an attachment file (refuses to overwrite existing files unless --force)",
 				"args":  []string{"id"},
-				"flags": []string{"--output", "--url"},
+				"flags": []string{"--output", "--url", "--force"},
 			},
 			{
 				"name": "schema",
