@@ -63,7 +63,7 @@ func (g *Globals) keyringCreds() auth.ClientCreds {
 		c, ok, err := auth.LoadClientCreds()
 		switch {
 		case err != nil:
-			output.Warn("could not read client credentials from keyring: %v", err)
+			output.Warn("could not read client credentials from keyring (check QBO_KEYRING_FILE_PASSWORD before re-running qbo auth set-client): %v", err)
 		case ok:
 			g.cc = c
 		}
@@ -92,6 +92,7 @@ func NewGlobals(ctx context.Context, cli *CLI) (*Globals, error) {
 		return nil, err
 	}
 	opts := output.NewOptions(cli.JSON, cli.Plain, cli.ResultsOnly, cli.Select)
+	auth.NonInteractive = cli.NoInput
 	return &Globals{
 		Ctx:     output.WithOptions(ctx, opts),
 		Config:  cfg,
