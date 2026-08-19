@@ -6,12 +6,23 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// hermeticKeyring forces the encrypted-file backend in a temp dir so tests
-// never touch the real OS keychain.
+// hermeticKeyring forces the file backend in a temp dir so tests never touch
+// the real OS keychain.
 func hermeticKeyring(t *testing.T) {
 	t.Helper()
 	t.Setenv("QBO_KEYRING_BACKEND", "file")
+	t.Setenv("QBO_KEYRING_FILE_PASSWORD", "test-passphrase")
 	t.Setenv("QBO_CONFIG_DIR", t.TempDir())
+	resetFilePassCache(t)
+}
+
+// resetFilePassCache clears the process-wide memoized passphrase so each test
+// resolves it fresh from its own env.
+func resetFilePassCache(t *testing.T) {
+	t.Helper()
+	filePassMu.Lock()
+	filePassCached = ""
+	filePassMu.Unlock()
 }
 
 func TestClientCredsRoundTrip(t *testing.T) {

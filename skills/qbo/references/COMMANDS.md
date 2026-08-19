@@ -205,3 +205,4 @@ and auto-posts on a schedule. Use the standard `list`/`get`/`create`/`update`/`d
 | `QBO_AUTO_JSON` | Set to `1` for auto-JSON when stdout is piped |
 | `QBO_CONFIG_DIR` | Override config directory (default: `~/.config/qbo/`) |
 | `QBO_KEYRING_BACKEND` | Set to `file` to force the encrypted-file backend (headless hosts) |
+| `QBO_KEYRING_FILE_PASSWORD` | Passphrase for the file backend; required when no terminal is available to prompt |

@@ -65,7 +65,7 @@ qbo auth login --manual
 
 For non-localhost redirect URIs, `qbo auth login` prints the auth URL and prompts you to paste the callback URL after authorizing.
 
-Tokens **and** client credentials (once `qbo auth set-client` runs, or after the first `qbo auth login`) are stored in the system keychain (macOS Keychain, Windows Credential Manager) with file-based fallback at `~/.config/qbo/tokens/`. Credentials resolve in priority order: env var (`QBO_CLIENT_ID`/`QBO_CLIENT_SECRET`) → keychain → `config.json`, so env vars still work and override the keychain when set. On headless hosts that can't reach the login keychain, set `QBO_KEYRING_BACKEND=file` to use the encrypted-file backend instead.
+Tokens **and** client credentials (once `qbo auth set-client` runs, or after the first `qbo auth login`) are stored in the system keychain (macOS Keychain, Windows Credential Manager) with file-based fallback at `~/.config/qbo/tokens/`. Credentials resolve in priority order: env var (`QBO_CLIENT_ID`/`QBO_CLIENT_SECRET`) → keychain → `config.json`, so env vars still work and override the keychain when set. On headless hosts that can't reach the login keychain, set `QBO_KEYRING_BACKEND=file` to use the encrypted-file backend instead — this also requires `QBO_KEYRING_FILE_PASSWORD` (the passphrase encrypting the token files; non-interactive runs fail without it). Tokens stored by versions that predate the passphrase requirement can't be decrypted; re-run `qbo auth login` once after upgrading.
 
 ### Verify
 
