@@ -22,7 +22,7 @@ type CLI struct {
 	Sandbox     bool         `help:"Use sandbox environment."`
 	DryRun      bool         `short:"n" name:"dry-run" help:"Show what would happen." aliases:"noop,preview"`
 	NoInput     bool         `name:"no-input" help:"Never prompt; fail if confirmation needed."`
-	Force       bool         `help:"Skip confirmations." aliases:"yes,assume-yes"`
+	Force       bool         `help:"Skip confirmations; overwrite existing files." aliases:"yes,assume-yes"`
 	Verbose     bool         `short:"v" help:"Verbose output to stderr."`
 	MinorVer    int          `name:"minor-version" default:"75" help:"QBO API minor version."`
 	Auth        AuthCmd      `cmd:"" help:"Authentication (login, logout, status, refresh)."`
