@@ -65,9 +65,12 @@ func FetchClientCreds(ctx context.Context, client *http.Client, vaultURL, secret
 
 	resp, err := client.Do(req)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.Canceled) {
 			return auth.ClientCreds{}, errfmt.Wrap(errfmt.ExitAuth, "vault fetch canceled", err)
 		}
+		// DeadlineExceeded here is the bounded HTTP client tripping on a
+		// stalled connection (the process context has no deadline) — a
+		// transport failure, retryable like the path below.
 		return auth.ClientCreds{}, errfmt.Wrap(errfmt.ExitRetryable, "cannot reach key vault "+vaultURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()

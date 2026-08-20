@@ -28,13 +28,15 @@ type AuthLoginCmd struct {
 }
 
 // fetchBootstrapCreds signs in to Entra ID and fetches the org's client
-// credentials from Key Vault. A package var so tests can stub the network.
-var fetchBootstrapCreds = func(g *Globals, b *config.Bootstrap, deviceCode bool) (auth.ClientCreds, error) {
+// credentials from Key Vault. silentOnly restricts it to the cached Entra
+// token (no browser or device code) — required for self-heal, which runs
+// inside arbitrary commands. A package var so tests can stub the network.
+var fetchBootstrapCreds = func(g *Globals, b *config.Bootstrap, deviceCode, silentOnly bool) (auth.ClientCreds, error) {
 	token, err := entra.AcquireVaultToken(g.Ctx, entra.Options{
 		TenantID:   b.EntraTenantID,
 		ClientID:   b.EntraClientID,
 		DeviceCode: deviceCode,
-		NoInput:    g.CLI.NoInput,
+		NoInput:    silentOnly,
 		Notify:     func(msg string) { output.Hint("%s", msg) },
 	})
 	if err != nil {
@@ -51,7 +53,7 @@ var fetchBootstrapCreds = func(g *Globals, b *config.Bootstrap, deviceCode bool)
 // failure in the Intuit flow doesn't force a second Entra round trip.
 func bootstrapCreds(g *Globals, b *config.Bootstrap, deviceCode bool) (auth.ClientCreds, error) {
 	output.Hint("no client credentials configured — fetching from %s via Entra ID sign-in", b.VaultURL)
-	creds, err := fetchBootstrapCreds(g, b, deviceCode)
+	creds, err := fetchBootstrapCreds(g, b, deviceCode, g.CLI.NoInput)
 	if err != nil {
 		return auth.ClientCreds{}, err
 	}
@@ -242,12 +244,7 @@ func (c *AuthRefreshCmd) Run(g *Globals) error {
 	if err != nil {
 		return err
 	}
-	clientID := g.ClientID()
-	clientSecret := g.ClientSecret()
-	if clientID == "" || clientSecret == "" {
-		return errfmt.Config("client credentials required — run: qbo auth set-client (or set QBO_CLIENT_ID and QBO_CLIENT_SECRET)")
-	}
-	newToken, err := auth.RefreshAccessToken(g.Ctx, clientID, clientSecret, token)
+	newToken, err := g.refreshToken(token)
 	if err != nil {
 		return err
 	}

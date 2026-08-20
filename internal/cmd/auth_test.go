@@ -57,7 +57,7 @@ func TestLoginWithoutCredsOnProvisionedMachineBootstraps(t *testing.T) {
 	t.Setenv("QBO_CLIENT_SECRET", "")
 	orig := fetchBootstrapCreds
 	t.Cleanup(func() { fetchBootstrapCreds = orig })
-	fetchBootstrapCreds = func(_ *Globals, b *config.Bootstrap, _ bool) (auth.ClientCreds, error) {
+	fetchBootstrapCreds = func(_ *Globals, b *config.Bootstrap, _, _ bool) (auth.ClientCreds, error) {
 		return auth.ClientCreds{}, errfmt.New(errfmt.ExitForbidden, "access denied to "+b.VaultURL)
 	}
 	g := credsGlobals(&config.Config{}, auth.ClientCreds{}, &config.Bootstrap{VaultURL: "https://v.vault.azure.net"}, nil)
@@ -77,7 +77,7 @@ func TestLoginBootstrapDryRunNoNetwork(t *testing.T) {
 	t.Setenv("QBO_CLIENT_SECRET", "")
 	orig := fetchBootstrapCreds
 	t.Cleanup(func() { fetchBootstrapCreds = orig })
-	fetchBootstrapCreds = func(*Globals, *config.Bootstrap, bool) (auth.ClientCreds, error) {
+	fetchBootstrapCreds = func(*Globals, *config.Bootstrap, bool, bool) (auth.ClientCreds, error) {
 		t.Fatal("dry-run must not fetch")
 		return auth.ClientCreds{}, nil
 	}
@@ -98,7 +98,7 @@ func TestBootstrapCredsStoresAndMarksOrigin(t *testing.T) {
 	orig := fetchBootstrapCreds
 	t.Cleanup(func() { fetchBootstrapCreds = orig })
 	want := auth.ClientCreds{ClientID: "id", ClientSecret: "sec", Origin: auth.CredsOriginBootstrap}
-	fetchBootstrapCreds = func(*Globals, *config.Bootstrap, bool) (auth.ClientCreds, error) {
+	fetchBootstrapCreds = func(*Globals, *config.Bootstrap, bool, bool) (auth.ClientCreds, error) {
 		return want, nil
 	}
 	g := credsGlobals(&config.Config{}, auth.ClientCreds{}, nil, nil)
@@ -125,7 +125,7 @@ func TestBootstrapCredsFetchFailure(t *testing.T) {
 	t.Setenv("QBO_CONFIG_DIR", t.TempDir())
 	orig := fetchBootstrapCreds
 	t.Cleanup(func() { fetchBootstrapCreds = orig })
-	fetchBootstrapCreds = func(*Globals, *config.Bootstrap, bool) (auth.ClientCreds, error) {
+	fetchBootstrapCreds = func(*Globals, *config.Bootstrap, bool, bool) (auth.ClientCreds, error) {
 		return auth.ClientCreds{}, errfmt.New(errfmt.ExitForbidden, "denied")
 	}
 	g := credsGlobals(&config.Config{}, auth.ClientCreds{}, nil, nil)

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 
@@ -55,6 +56,9 @@ type Globals struct {
 	bsOnce sync.Once
 	bs     *config.Bootstrap
 	bsErr  error
+
+	// healAttempted caps the vault self-heal at one attempt per invocation.
+	healAttempted bool
 }
 
 // Bootstrap lazily loads the machine-scope bootstrap config (installed by an
@@ -151,12 +155,7 @@ func (g *Globals) loadAndRefreshToken(realmID string) (*oauth2.Token, error) {
 		return nil, err
 	}
 	if auth.IsTokenExpired(token) {
-		clientID := g.ClientID()
-		clientSecret := g.ClientSecret()
-		if clientID == "" || clientSecret == "" {
-			return nil, errfmt.Config("client credentials required for token refresh — run: qbo auth set-client (or set QBO_CLIENT_ID and QBO_CLIENT_SECRET)")
-		}
-		newToken, err := auth.RefreshAccessToken(g.Ctx, clientID, clientSecret, token)
+		newToken, err := g.refreshToken(token)
 		if err != nil {
 			return nil, err
 		}
@@ -166,6 +165,86 @@ func (g *Globals) loadAndRefreshToken(realmID string) (*oauth2.Token, error) {
 		return newToken, nil
 	}
 	return token, nil
+}
+
+// refreshAccessToken is a stub point for tests; production always hits Intuit.
+var refreshAccessToken = auth.RefreshAccessToken
+
+// refreshToken exchanges the refresh token for a new access token. When the
+// credentials came from the vault bootstrap and Intuit rejects them
+// (invalid_client — the org rotated the app secret), it silently re-fetches
+// from the vault using the cached Entra token and retries once. User-supplied
+// credentials (env, set-client, config) are never auto-replaced. Persisting
+// the new token is the caller's job.
+func (g *Globals) refreshToken(token *oauth2.Token) (*oauth2.Token, error) {
+	clientID := g.ClientID()
+	clientSecret := g.ClientSecret()
+	if clientID == "" || clientSecret == "" {
+		return nil, errfmt.Config("client credentials required for token refresh — run: qbo auth set-client (or set QBO_CLIENT_ID and QBO_CLIENT_SECRET)")
+	}
+	newToken, err := refreshAccessToken(g.Ctx, clientID, clientSecret, token)
+	if err != nil && auth.IsInvalidClient(err) {
+		if creds, ok := g.selfHealCreds(); ok {
+			newToken, err = refreshAccessToken(g.Ctx, creds.ClientID, creds.ClientSecret, token)
+		}
+	}
+	if err != nil {
+		return nil, withReloginHint(err)
+	}
+	return newToken, nil
+}
+
+// withReloginHint appends re-login guidance to an already-shaped errfmt error
+// without re-wrapping it (Wrap flattens the message into the detail, which
+// would stutter "token refresh failed" twice).
+func withReloginHint(err error) error {
+	var e *errfmt.Error
+	if errors.As(err, &e) {
+		hinted := *e
+		hinted.Message += " — run: qbo auth login"
+		return &hinted
+	}
+	return errfmt.Wrap(errfmt.ExitAuth, "token refresh failed — run: qbo auth login", err)
+}
+
+// credsAreBootstrapOwned reports whether the credentials the refresh actually
+// used are the vault-fetched keyring entry — the only ones self-heal may
+// replace. Any env override (either variable) means the user supplied at
+// least part of the credentials, so they are never auto-replaced.
+func (g *Globals) credsAreBootstrapOwned() bool {
+	return os.Getenv("QBO_CLIENT_ID") == "" &&
+		os.Getenv("QBO_CLIENT_SECRET") == "" &&
+		g.keyringCreds().Origin == auth.CredsOriginBootstrap
+}
+
+// selfHealCreds re-fetches rotated client credentials from the vault, at most
+// once per invocation, and only for credentials the bootstrap flow owns.
+// It is silent by design: only the cached Entra token is used, and failure
+// just falls back to the caller's guided re-login error.
+func (g *Globals) selfHealCreds() (auth.ClientCreds, bool) {
+	if g.healAttempted || !g.credsAreBootstrapOwned() {
+		return auth.ClientCreds{}, false
+	}
+	g.healAttempted = true
+	b, err := g.Bootstrap()
+	if err != nil || b == nil {
+		return auth.ClientCreds{}, false
+	}
+	creds, err := fetchBootstrapCreds(g, b, false, true)
+	if err != nil {
+		output.Warn("could not refresh rotated credentials from vault: %v", err)
+		return auth.ClientCreds{}, false
+	}
+	// The vault secret's redirect_uri is optional; keep the one login stored
+	// so a production (non-localhost) setup survives the heal.
+	if creds.RedirectURI == "" {
+		creds.RedirectURI = g.keyringCreds().RedirectURI
+	}
+	if err := auth.StoreClientCreds(creds); err != nil {
+		output.Warn("fetched rotated credentials but could not save them to the keyring: %v", err)
+	}
+	g.cc = creds
+	return creds, true
 }
 
 func WriteOutput(ctx context.Context, data any) error {

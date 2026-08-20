@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -55,9 +56,31 @@ func RefreshAccessToken(ctx context.Context, clientID, clientSecret string, toke
 	src := cfg.TokenSource(ctx, token)
 	newToken, err := src.Token()
 	if err != nil {
-		return nil, errfmt.Wrap(errfmt.ExitAuth, "token refresh failed", err)
+		wrapped := errfmt.Wrap(errfmt.ExitAuth, "token refresh failed", err)
+		// Classify while the typed oauth2 error is still in hand — errfmt
+		// flattens the chain to a string.
+		var re *oauth2.RetrieveError
+		if errors.As(err, &re) && re.ErrorCode == "invalid_client" {
+			return nil, &InvalidClientError{Err: wrapped}
+		}
+		return nil, wrapped
 	}
 	return newToken, nil
+}
+
+// InvalidClientError marks a refresh that Intuit rejected because the client
+// credentials themselves are bad (rotated or revoked app secret), as opposed
+// to a dead refresh token. The vault self-heal keys off this type.
+type InvalidClientError struct{ Err *errfmt.Error }
+
+func (e *InvalidClientError) Error() string { return e.Err.Error() }
+func (e *InvalidClientError) Unwrap() error { return e.Err }
+
+// IsInvalidClient reports whether err (anywhere in its chain) is an
+// InvalidClientError.
+func IsInvalidClient(err error) bool {
+	var ice *InvalidClientError
+	return errors.As(err, &ice)
 }
 
 const DefaultCallbackPort = 8844

@@ -30,6 +30,7 @@ func TestClassify(t *testing.T) {
 		{"platform blocked", errors.New(`AADSTS50005: Device platform is not supported by policy`), errfmt.ExitForbidden},
 		{"declined consent", errors.New(`AADSTS65004: User declined to consent`), errfmt.ExitAuth},
 		{"canceled", context.Canceled, errfmt.ExitAuth},
+		{"timed out", context.DeadlineExceeded, errfmt.ExitAuth},
 		{"network", &url.Error{Op: "Get", URL: "https://login.microsoftonline.com", Err: errors.New("connection refused")}, errfmt.ExitRetryable},
 		{"generic", errors.New("something else"), errfmt.ExitAuth},
 	}

@@ -8,8 +8,10 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/AzureAD/microsoft-authentication-library-for-go/apps/cache"
 	"github.com/AzureAD/microsoft-authentication-library-for-go/apps/public"
@@ -21,6 +23,12 @@ import (
 // vaultScope requests a token usable against any Azure Key Vault; RBAC on the
 // vault side decides what it can actually read.
 const vaultScope = "https://vault.azure.net/.default"
+
+// interactiveTimeout bounds the browser sign-in wait so an abandoned login —
+// especially one driven by an agent — doesn't hang forever. It matches the
+// Intuit flow's loginTimeout. The device-code flow is exempt: it carries its
+// own server-issued expiry.
+const interactiveTimeout = 5 * time.Minute
 
 type Options struct {
 	TenantID string
@@ -77,23 +85,36 @@ func AcquireVaultToken(ctx context.Context, opts Options) (string, error) {
 	client, err := public.New(opts.ClientID,
 		public.WithAuthority("https://login.microsoftonline.com/"+opts.TenantID),
 		public.WithCache(keyringCache{}),
+		// Bound every network leg (silent refresh, device-code polling, code
+		// exchange): the process context is only signal-cancelable, and the
+		// silent path also runs headless inside arbitrary commands via
+		// self-heal, where a stalled connection must not hang forever.
+		public.WithHTTPClient(&http.Client{Timeout: 30 * time.Second}),
 	)
 	if err != nil {
 		return "", errfmt.Wrap(errfmt.ExitError, "cannot initialize Entra client", err)
 	}
 	scopes := []string{vaultScope}
 
-	if accounts, err := client.Accounts(ctx); err == nil && len(accounts) > 0 {
-		result, err := client.AcquireTokenSilent(ctx, scopes, public.WithSilentAccount(accounts[0]))
-		if err == nil {
-			return result.AccessToken, nil
+	// Pick the cached account for this tenant — the cache can hold sign-ins
+	// to other tenants, and accounts[0] order is not guaranteed.
+	if accounts, err := client.Accounts(ctx); err == nil {
+		for _, account := range accounts {
+			if !strings.EqualFold(account.Realm, opts.TenantID) {
+				continue
+			}
+			result, err := client.AcquireTokenSilent(ctx, scopes, public.WithSilentAccount(account))
+			if err == nil {
+				return result.AccessToken, nil
+			}
+			// Silent failure (expired refresh token, revoked session) falls
+			// through to interactive below.
+			break
 		}
-		// Silent failure (expired refresh token, revoked session) falls
-		// through to interactive below.
 	}
 
 	if opts.NoInput {
-		return "", errfmt.New(errfmt.ExitAuth, "Entra sign-in required but --no-input given — run qbo auth login interactively once to cache the sign-in")
+		return "", errfmt.New(errfmt.ExitAuth, "a cached Entra sign-in is required here but none is available — run qbo auth login interactively once to cache it")
 	}
 
 	if opts.DeviceCode {
@@ -109,7 +130,9 @@ func AcquireVaultToken(ctx context.Context, opts Options) (string, error) {
 		return result.AccessToken, nil
 	}
 
-	result, err := client.AcquireTokenInteractive(ctx, scopes)
+	ictx, cancel := context.WithTimeout(ctx, interactiveTimeout)
+	defer cancel()
+	result, err := client.AcquireTokenInteractive(ictx, scopes)
 	if err != nil {
 		return "", classify(err)
 	}
@@ -120,7 +143,10 @@ func AcquireVaultToken(ctx context.Context, opts Options) (string, error) {
 // Conditional Access blocks are permission problems (6), cancellations need a
 // re-login (4), transport problems are retryable (8).
 func classify(err error) error {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return errfmt.Wrap(errfmt.ExitAuth, "Entra sign-in timed out waiting for the browser — run qbo auth login again", err)
+	}
+	if errors.Is(err, context.Canceled) {
 		return errfmt.Wrap(errfmt.ExitAuth, "Entra sign-in canceled", err)
 	}
 	// AADSTS530xx are Conditional Access blocks (unmanaged/non-compliant
