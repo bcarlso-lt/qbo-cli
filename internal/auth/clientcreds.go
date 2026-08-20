@@ -28,7 +28,17 @@ type ClientCreds struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
 	RedirectURI  string `json:"redirect_uri,omitempty"`
+	// Origin records which tier the credentials came from when they were
+	// stored: CredsOriginBootstrap for creds fetched via the machine-scope
+	// bootstrap flow, empty for user-supplied ones (set-client, env). The
+	// vault self-heal on refresh failure will key off this marker; nothing
+	// writes CredsOriginBootstrap until that flow lands.
+	Origin string `json:"origin,omitempty"`
 }
+
+// CredsOriginBootstrap marks credentials fetched from an org vault via the
+// machine-scope bootstrap config, as opposed to entered by the user.
+const CredsOriginBootstrap = "bootstrap"
 
 func StoreClientCreds(c ClientCreds) error {
 	kr, err := openKeyring()

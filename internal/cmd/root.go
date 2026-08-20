@@ -51,6 +51,30 @@ type Globals struct {
 
 	ccOnce sync.Once
 	cc     auth.ClientCreds
+
+	bsOnce sync.Once
+	bs     *config.Bootstrap
+	bsErr  error
+}
+
+// Bootstrap lazily loads the machine-scope bootstrap config (installed by an
+// org's device management), once per process. (nil, nil) means the machine is
+// not org-provisioned. A malformed or incomplete file returns its config
+// error so auth commands fail loudly (exit 10) instead of treating a
+// half-provisioned machine as unprovisioned. Commands that never consult the
+// bootstrap tier are unaffected.
+func (g *Globals) Bootstrap() (*config.Bootstrap, error) {
+	g.bsOnce.Do(func() {
+		b, ok, err := config.LoadBootstrap()
+		if err != nil {
+			g.bsErr = err
+			return
+		}
+		if ok {
+			g.bs = b
+		}
+	})
+	return g.bs, g.bsErr
 }
 
 // keyringCreds lazily loads the app-level OAuth client credentials from the

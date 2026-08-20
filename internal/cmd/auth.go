@@ -27,6 +27,15 @@ func (c *AuthLoginCmd) Run(g *Globals) error {
 	clientID := g.ClientID()
 	clientSecret := g.ClientSecret()
 	if clientID == "" || clientSecret == "" {
+		// No creds in env/keyring/config: the bootstrap tier is next. A broken
+		// bootstrap file must fail loudly here, not read as "unprovisioned".
+		b, err := g.Bootstrap()
+		if err != nil {
+			return err
+		}
+		if b != nil {
+			return errfmt.Config("this machine is provisioned to fetch client credentials from " + b.VaultURL + ", but this qbo build does not support vault bootstrap yet — run: qbo auth set-client (or set QBO_CLIENT_ID and QBO_CLIENT_SECRET)")
+		}
 		return errfmt.Config("set client credentials first — run: qbo auth set-client (or set QBO_CLIENT_ID and QBO_CLIENT_SECRET)")
 	}
 
@@ -68,11 +77,19 @@ func (c *AuthLoginCmd) Run(g *Globals) error {
 	}
 
 	// Persist the client credentials used so future invocations resolve them
-	// from the keyring without QBO_CLIENT_ID/SECRET in the environment.
+	// from the keyring without QBO_CLIENT_ID/SECRET in the environment. Keep
+	// the origin marker only when re-storing the exact keyring creds — env
+	// creds with a matching ID but rotated secret are user-supplied and must
+	// not be stamped as vault-owned.
+	origin := ""
+	if kc := g.keyringCreds(); kc.ClientID == clientID && kc.ClientSecret == clientSecret {
+		origin = kc.Origin
+	}
 	if err := auth.StoreClientCreds(auth.ClientCreds{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURI:  storedRedirect,
+		Origin:       origin,
 	}); err != nil {
 		output.Warn("authenticated, but could not save client credentials to keyring: %v", err)
 	}
@@ -98,42 +115,68 @@ func (c *AuthLogoutCmd) Run(g *Globals) error {
 type AuthStatusCmd struct{}
 
 func (c *AuthStatusCmd) Run(g *Globals) error {
+	// Credential/bootstrap diagnostics are built first so they are reported
+	// even when no company or token exists yet — that unauthenticated state
+	// is exactly when "why can't this machine log in" gets debugged. The
+	// original error still decides the exit code.
+	status := map[string]any{
+		"authenticated": false,
+		"client_credentials": map[string]any{
+			"configured": g.ClientID() != "" && g.ClientSecret() != "",
+			"source":     clientCredsSource(g),
+		},
+	}
+	if b, err := g.Bootstrap(); err != nil {
+		status["bootstrap"] = map[string]any{"error": err.Error()}
+	} else if b != nil {
+		status["bootstrap"] = map[string]any{
+			"vault_url":       b.VaultURL,
+			"entra_tenant_id": b.EntraTenantID,
+		}
+	}
 	realmID, err := g.ResolveCompanyID()
 	if err != nil {
+		_ = WriteOutput(g.Ctx, status)
 		return err
 	}
-	token, err := auth.LoadToken(realmID)
-	if err != nil {
-		return err
-	}
-	status := map[string]any{
-		"company_id":    realmID,
-		"authenticated": true,
-		"token_expiry":  token.Expiry.Format(time.RFC3339),
-		"expired":       auth.IsTokenExpired(token),
-	}
+	status["company_id"] = realmID
 	co := g.Config.FindCompany(realmID)
 	if co != nil {
 		status["company_name"] = co.CompanyName
 		status["environment"] = co.Environment
 	}
-	status["client_credentials"] = map[string]any{
-		"configured": g.ClientID() != "" && g.ClientSecret() != "",
-		"source":     clientCredsSource(g),
+	token, err := auth.LoadToken(realmID)
+	if err != nil {
+		_ = WriteOutput(g.Ctx, status)
+		return err
 	}
+	status["authenticated"] = true
+	status["token_expiry"] = token.Expiry.Format(time.RFC3339)
+	status["expired"] = auth.IsTokenExpired(token)
 	return WriteOutput(g.Ctx, status)
 }
 
 // clientCredsSource reports which tier supplied the client credentials, for
-// debugging "why can't this agent see QBO" situations.
+// debugging "why can't this agent see QBO" situations. Keyring creds fetched
+// via the machine-scope bootstrap flow report "bootstrap" rather than
+// "keyring" so provisioned machines are distinguishable from set-client ones;
+// a provisioned machine that hasn't fetched yet reports "bootstrap-pending".
 func clientCredsSource(g *Globals) string {
+	b, bErr := g.Bootstrap()
 	switch {
 	case os.Getenv("QBO_CLIENT_ID") != "":
 		return "env"
 	case g.keyringCreds().ClientID != "":
+		if g.keyringCreds().Origin == auth.CredsOriginBootstrap {
+			return "bootstrap"
+		}
 		return "keyring"
 	case g.Config.ClientID != "":
 		return "config"
+	case bErr != nil:
+		return "bootstrap-error"
+	case b != nil:
+		return "bootstrap-pending"
 	default:
 		return "none"
 	}
