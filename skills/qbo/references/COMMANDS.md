@@ -49,7 +49,7 @@ qbo auth status               # Show token status, company, and client-cred sour
 qbo auth refresh              # Force token refresh
 ```
 
-For sandbox, the default `http://localhost:8844/callback` redirect works automatically. For production, pass `--redirect-uri` (or set `QBO_REDIRECT_URI`) to a registered public URI. Non-localhost URIs use a manual flow: paste the callback URL after authorizing in the browser.
+For sandbox, the default `http://localhost:8844/callback` redirect works automatically. For production, pass `--redirect-uri` (or set `QBO_REDIRECT_URI`) to a registered HTTPS URI whose page forwards the callback query string to `http://localhost:8844/callback` (bouncer mode) — the login then completes with no pasting. `--manual` selects the paste-the-callback-URL flow instead (requires an interactive terminal).
 
 ### list
 

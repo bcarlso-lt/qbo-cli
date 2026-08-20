@@ -22,7 +22,7 @@ type AuthCmd struct {
 }
 
 type AuthLoginCmd struct {
-	Manual      bool   `help:"Print URL for manual copy instead of opening browser."`
+	Manual      bool   `help:"Paste-the-callback-URL flow instead of the local listener (requires an interactive terminal)."`
 	RedirectURI string `name:"redirect-uri" help:"OAuth redirect URI. Required for production (non-localhost). Set via flag, QBO_REDIRECT_URI, or config." env:"QBO_REDIRECT_URI"`
 	DeviceCode  bool   `name:"device-code" help:"Use a device code instead of a browser for the Entra sign-in (headless bootstrap)."`
 }
@@ -107,7 +107,7 @@ func (c *AuthLoginCmd) Run(g *Globals) error {
 		return nil
 	}
 
-	result, err := auth.LoginInteractive(g.Ctx, clientID, clientSecret, redirectURI)
+	result, err := auth.LoginInteractive(g.Ctx, clientID, clientSecret, redirectURI, c.Manual)
 	if err != nil {
 		return err
 	}

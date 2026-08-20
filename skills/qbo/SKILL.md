@@ -36,11 +36,10 @@ See [Intuit's OAuth 2.0 guide](https://developer.intuit.com/app/developer/qbo/do
 
 **Sandbox** allows `http://localhost:8844/callback` — just register it in the Intuit portal and `qbo auth login` handles everything automatically.
 
-**Production** does not allow localhost. Three options:
+**Production** does not allow localhost — Intuit requires an HTTPS redirect URI on a real host. Two options:
 
-1. **Tunnel/funnel address** — Route a domain (e.g. `https://auth.yourdomain.com`) back to your machine. Register it as the redirect URI. Use `--redirect-uri` or set `QBO_REDIRECT_URI`.
-2. **Login on the same machine** — If the agent runs on a machine with a browser, use a tunnel so localhost callbacks work.
-3. **Non-resolving domain** — Register any domain you own (e.g. `https://yourdomain.com`) as the redirect URI. After authorizing, the browser redirects there with `?code=...&realmId=...&state=...` in the URL. Copy the full URL from the browser and paste it back into `qbo auth login` (or provide it to the agent to exchange manually).
+1. **Bouncer page (recommended)** — Host a static HTTPS page that forwards the callback query string to the local listener (`location.replace('http://localhost:8844/callback' + location.search)`). Register its URL as the redirect URI and pass it via `--redirect-uri` or `QBO_REDIRECT_URI`. `qbo auth login` sends Intuit the hosted URI but still catches the forwarded callback locally — the login completes automatically, no pasting.
+2. **Manual paste (`--manual`)** — Register any HTTPS URL you own as the redirect URI. After authorizing, the browser lands there with `?code=...&realmId=...&state=...`; copy the full URL and paste it back into `qbo auth login --manual`. Requires an interactive terminal.
 
 ## Setup
 
@@ -59,11 +58,14 @@ qbo auth login --redirect-uri https://yourdomain.com
 export QBO_REDIRECT_URI=https://yourdomain.com
 qbo auth login
 
-# Print the URL without opening a browser (useful for agents/remote)
+# Paste-the-callback-URL flow instead of the local listener (needs a TTY)
 qbo auth login --manual
 ```
 
-For non-localhost redirect URIs, `qbo auth login` prints the auth URL and prompts you to paste the callback URL after authorizing.
+`qbo auth login` always prints the auth URL and listens on `localhost:8844`
+for the callback — for a non-localhost redirect URI the hosted page must
+forward the callback there (bouncer mode, above). Use `--manual` only when
+the local listener can't work (e.g. logging in from a different machine).
 
 Tokens **and** client credentials (once `qbo auth set-client` runs, or after the first `qbo auth login`) are stored in the system keychain (macOS Keychain, Windows Credential Manager) with file-based fallback at `~/.config/qbo/tokens/`. Credentials resolve in priority order: env var (`QBO_CLIENT_ID`/`QBO_CLIENT_SECRET`) → keychain → `config.json`, so env vars still work and override the keychain when set. On headless hosts that can't reach the login keychain, set `QBO_KEYRING_BACKEND=file` to use the encrypted-file backend instead — this also requires `QBO_KEYRING_FILE_PASSWORD` (the passphrase encrypting the token files; non-interactive runs fail without it). Tokens stored by versions that predate the passphrase requirement can't be decrypted; re-run `qbo auth login` once after upgrading.
 

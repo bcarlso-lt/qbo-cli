@@ -98,18 +98,24 @@ func isLocalRedirect(redirectURL string) bool {
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
-func LoginInteractive(ctx context.Context, clientID, clientSecret, redirectURL string) (*AuthResult, error) {
+// LoginInteractive runs the browser OAuth flow, listening on
+// localhost:8844 for the callback regardless of the registered redirect URI.
+// A non-local redirectURL is "bouncer mode": Intuit requires HTTPS redirect
+// URIs on production apps, so a hosted static page receives the callback and
+// forwards it (query string intact) to the local listener. manual selects the
+// paste-the-callback-URL flow instead, which requires an interactive stdin.
+func LoginInteractive(ctx context.Context, clientID, clientSecret, redirectURL string, manual bool) (*AuthResult, error) {
 	if redirectURL == "" {
 		redirectURL = DefaultRedirectURI()
 	}
 
-	if isLocalRedirect(redirectURL) {
-		return loginLocal(ctx, clientID, clientSecret, redirectURL)
+	if manual {
+		return loginManual(ctx, clientID, clientSecret, redirectURL)
 	}
-	return loginManual(ctx, clientID, clientSecret, redirectURL)
+	return loginListen(ctx, clientID, clientSecret, redirectURL)
 }
 
-func loginLocal(ctx context.Context, clientID, clientSecret, redirectURL string) (*AuthResult, error) {
+func loginListen(ctx context.Context, clientID, clientSecret, redirectURL string) (*AuthResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, loginTimeout)
 	defer cancel()
 
@@ -122,33 +128,46 @@ func loginLocal(ctx context.Context, clientID, clientSecret, redirectURL string)
 	cfg := OAuthConfig(clientID, clientSecret, redirectURL)
 	state, err := GenerateState()
 	if err != nil {
+		_ = listener.Close()
 		return nil, err
 	}
 
 	resultCh := make(chan *AuthResult, 1)
 	errCh := make(chan error, 1)
 
+	// The response must be written and flushed before signaling the channels:
+	// a signal makes loginListen return and Close the server, which kills the
+	// connection before an unflushed response reaches the browser.
+	flush := func(w http.ResponseWriter) {
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("state") != state {
-			errCh <- errfmt.New(errfmt.ExitAuth, "state mismatch")
 			http.Error(w, "state mismatch", http.StatusBadRequest)
+			flush(w)
+			errCh <- errfmt.New(errfmt.ExitAuth, "state mismatch")
 			return
 		}
 		code := r.URL.Query().Get("code")
 		realmID := r.URL.Query().Get("realmId")
 		if code == "" || realmID == "" {
-			errCh <- errfmt.New(errfmt.ExitAuth, "missing code or realmId")
 			http.Error(w, "missing parameters", http.StatusBadRequest)
+			flush(w)
+			errCh <- errfmt.New(errfmt.ExitAuth, "missing code or realmId")
 			return
 		}
 		token, terr := cfg.Exchange(ctx, code)
 		if terr != nil {
-			errCh <- errfmt.Wrap(errfmt.ExitAuth, "token exchange failed", terr)
 			http.Error(w, "exchange failed", http.StatusInternalServerError)
+			flush(w)
+			errCh <- errfmt.Wrap(errfmt.ExitAuth, "token exchange failed", terr)
 			return
 		}
 		_, _ = fmt.Fprint(w, "<html><body><h2>Authenticated!</h2><p>You can close this window.</p></body></html>")
+		flush(w)
 		resultCh <- &AuthResult{Token: token, RealmID: realmID}
 	})
 
@@ -162,6 +181,9 @@ func loginLocal(ctx context.Context, clientID, clientSecret, redirectURL string)
 
 	authURL := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline)
 	fmt.Fprintf(os.Stderr, "Open this URL in your browser:\n\n  %s\n\n", authURL)
+	if !isLocalRedirect(redirectURL) {
+		fmt.Fprintf(os.Stderr, "The callback will bounce through %s back to this machine.\n", redirectURL)
+	}
 	openBrowser(authURL)
 
 	select {
@@ -218,7 +240,9 @@ func loginManual(ctx context.Context, clientID, clientSecret, redirectURL string
 	return &AuthResult{Token: token, RealmID: realmID}, nil
 }
 
-func openBrowser(url string) {
+// openBrowser is a var so tests can capture the auth URL instead of opening
+// a real browser.
+var openBrowser = func(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":

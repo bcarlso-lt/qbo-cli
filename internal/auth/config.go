@@ -10,6 +10,9 @@ const (
 
 var Scopes = []string{"com.intuit.quickbooks.accounting"}
 
+// tokenURL is a var so tests can point the code exchange at a stub server.
+var tokenURL = TokenURLProduction
+
 func OAuthConfig(clientID, clientSecret, redirectURL string) *oauth2.Config {
 	return &oauth2.Config{
 		ClientID:     clientID,
@@ -18,7 +21,7 @@ func OAuthConfig(clientID, clientSecret, redirectURL string) *oauth2.Config {
 		Scopes:       Scopes,
 		Endpoint: oauth2.Endpoint{
 			AuthURL:  AuthURLProduction,
-			TokenURL: TokenURLProduction,
+			TokenURL: tokenURL,
 		},
 	}
 }
