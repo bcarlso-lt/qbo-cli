@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/voska/qbo-cli/internal/auth"
 	"github.com/voska/qbo-cli/internal/config"
+	"github.com/voska/qbo-cli/internal/entra"
 	"github.com/voska/qbo-cli/internal/errfmt"
 	"github.com/voska/qbo-cli/internal/output"
+	"github.com/voska/qbo-cli/internal/vault"
 )
 
 type AuthCmd struct {
@@ -21,6 +24,44 @@ type AuthCmd struct {
 type AuthLoginCmd struct {
 	Manual      bool   `help:"Print URL for manual copy instead of opening browser."`
 	RedirectURI string `name:"redirect-uri" help:"OAuth redirect URI. Required for production (non-localhost). Set via flag, QBO_REDIRECT_URI, or config." env:"QBO_REDIRECT_URI"`
+	DeviceCode  bool   `name:"device-code" help:"Use a device code instead of a browser for the Entra sign-in (headless bootstrap)."`
+}
+
+// fetchBootstrapCreds signs in to Entra ID and fetches the org's client
+// credentials from Key Vault. A package var so tests can stub the network.
+var fetchBootstrapCreds = func(g *Globals, b *config.Bootstrap, deviceCode bool) (auth.ClientCreds, error) {
+	token, err := entra.AcquireVaultToken(g.Ctx, entra.Options{
+		TenantID:   b.EntraTenantID,
+		ClientID:   b.EntraClientID,
+		DeviceCode: deviceCode,
+		NoInput:    g.CLI.NoInput,
+		Notify:     func(msg string) { output.Hint("%s", msg) },
+	})
+	if err != nil {
+		return auth.ClientCreds{}, err
+	}
+	// The vault GET gets its own bounded client: the process context is only
+	// signal-cancelable, and a stalled connection must not hang login.
+	httpClient := &http.Client{Timeout: 60 * time.Second}
+	return vault.FetchClientCreds(g.Ctx, httpClient, b.VaultURL, b.VaultSecretName, token)
+}
+
+// bootstrapCreds runs the vault bootstrap when no client credentials are
+// configured on a provisioned machine, storing the fetched creds so a later
+// failure in the Intuit flow doesn't force a second Entra round trip.
+func bootstrapCreds(g *Globals, b *config.Bootstrap, deviceCode bool) (auth.ClientCreds, error) {
+	output.Hint("no client credentials configured — fetching from %s via Entra ID sign-in", b.VaultURL)
+	creds, err := fetchBootstrapCreds(g, b, deviceCode)
+	if err != nil {
+		return auth.ClientCreds{}, err
+	}
+	if err := auth.StoreClientCreds(creds); err != nil {
+		output.Warn("fetched credentials but could not save them to the keyring: %v", err)
+	}
+	// Refresh the memoized keyring creds (already resolved as empty above) so
+	// the post-login re-store sees these creds and preserves their origin.
+	g.cc = creds
+	return creds, nil
 }
 
 func (c *AuthLoginCmd) Run(g *Globals) error {
@@ -33,10 +74,18 @@ func (c *AuthLoginCmd) Run(g *Globals) error {
 		if err != nil {
 			return err
 		}
-		if b != nil {
-			return errfmt.Config("this machine is provisioned to fetch client credentials from " + b.VaultURL + ", but this qbo build does not support vault bootstrap yet — run: qbo auth set-client (or set QBO_CLIENT_ID and QBO_CLIENT_SECRET)")
+		if b == nil {
+			return errfmt.Config("set client credentials first — run: qbo auth set-client (or set QBO_CLIENT_ID and QBO_CLIENT_SECRET)")
 		}
-		return errfmt.Config("set client credentials first — run: qbo auth set-client (or set QBO_CLIENT_ID and QBO_CLIENT_SECRET)")
+		if g.CLI.DryRun {
+			output.Hint("[dry-run] would sign in to Entra tenant %s and fetch client credentials from %s/secrets/%s", b.EntraTenantID, b.VaultURL, b.VaultSecretName)
+			return nil
+		}
+		creds, err := bootstrapCreds(g, b, c.DeviceCode)
+		if err != nil {
+			return err
+		}
+		clientID, clientSecret = creds.ClientID, creds.ClientSecret
 	}
 
 	redirectURI := c.RedirectURI
@@ -226,10 +275,16 @@ type AuthSetClientCmd struct {
 func (c *AuthSetClientCmd) Run(g *Globals) error {
 	if c.Clear {
 		if g.CLI.DryRun {
-			output.Hint("[dry-run] would remove client credentials from keyring")
+			output.Hint("[dry-run] would remove client credentials and any cached Entra sign-in from keyring")
 			return nil
 		}
 		if err := auth.DeleteClientCreds(); err != nil {
+			return err
+		}
+		// Clearing creds resets the bootstrap state too: the cached Entra
+		// session could silently re-fetch vault secrets and must not outlive
+		// the credentials it was used to obtain.
+		if err := auth.DeleteEntraCache(); err != nil {
 			return err
 		}
 		output.Success("client credentials removed from keyring")
