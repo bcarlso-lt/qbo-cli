@@ -51,7 +51,7 @@ func TestSanitizeCellPassesPlainText(t *testing.T) {
 }
 
 func TestSanitizeMessageKeepsNewlinesStripsEscapes(t *testing.T) {
-	got := SanitizeMessage("line1\nline2\t\x1b[2Jrestx")
+	got := SanitizeMessage("line1\nline2\t\x1b[2Jrest\u009bx")
 	if got != "line1\nline2\t[2Jrestx" {
 		t.Fatalf("got %q", got)
 	}

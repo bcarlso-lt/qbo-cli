@@ -32,7 +32,9 @@ func TestFilePasswordRejectsSetButEmptyEnv(t *testing.T) {
 func TestFilePasswordFailsHeadlessWithoutEnv(t *testing.T) {
 	resetFilePassCache(t)
 	t.Setenv("QBO_KEYRING_FILE_PASSWORD", "x") // register restore, then unset
-	os.Unsetenv("QBO_KEYRING_FILE_PASSWORD")
+	if err := os.Unsetenv("QBO_KEYRING_FILE_PASSWORD"); err != nil {
+		t.Fatal(err)
+	}
 	// Under `go test`, stdin is not a terminal, so the prompt path is
 	// unreachable and the missing passphrase must fail, never silently
 	// fall back to an empty one.
