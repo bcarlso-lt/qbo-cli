@@ -5,7 +5,7 @@ CLI for humans and AI agents. Data goes to stdout (parseable), hints/progress to
 ## Build & Test
 
 ```bash
-make build    # Build to bin/qbo (uses CGO_ENABLED=0 for pure Go)
+make build    # Build to bin/qbo (needs cgo: macOS Keychain backend is cgo-based)
 make test     # Run tests with race detector
 make lint     # golangci-lint
 make vet      # go vet
